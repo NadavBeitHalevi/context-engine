@@ -15,7 +15,7 @@ services/       # Context Engine logic (planner, executor, agents, registry)
 ## Run
 
 ```bash
-cp .env.example .env   # fill in OPENAI_API_KEY and PINECONE_API_KEY
+cp .env.example .env   # fill in ANTHROPIC_API_KEY, OPENAI_API_KEY (embeddings) and PINECONE_API_KEY
 uv sync
 uv run uvicorn app:app --reload
 ```

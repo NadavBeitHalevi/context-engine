@@ -14,15 +14,16 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # API keys
-    openai_api_key: str = ""
+    anthropic_api_key: str = ""  # generation (Claude)
+    openai_api_key: str = ""  # embeddings only
     pinecone_api_key: str = ""
 
-    # Models (defaults follow the book's Chapter 9 setup)
-    generation_model: str = "gpt-5"
+    # Models
+    generation_model: str = "claude-opus-5-5"
     embedding_model: str = "text-embedding-3-small"
 
     # Pinecone
-    pinecone_index_name: str = "genai-mas-mcp-ch3"
+    pinecone_index_name: str = "genai-context-engine"
     namespace_context: str = "ContextLibrary"
     namespace_knowledge: str = "KnowledgeStore"
 
