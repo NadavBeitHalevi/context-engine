@@ -6,6 +6,8 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
-def health() -> dict:
+def health() -> dict[str, str]:
     settings = get_settings()
-    return {"status": "ok", "app": settings.app_name, "environment": settings.environment}
+    return {"status": "ok", 
+            "app": settings.app_name, 
+            "environment": settings.environment}

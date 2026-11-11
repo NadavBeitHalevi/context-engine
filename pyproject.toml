@@ -5,6 +5,7 @@ description = "FastAPI service that runs a multi-agent Context Engine (Planner -
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "anthropic>=2.8.0",
     "fastapi>=0.162.2",
     "openai>=3.46.0",
     "pinecone>=10.3.0",
@@ -17,3 +18,16 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra -m 'not integration'"
+markers = [
+    "integration: calls real external APIs with keys from .env (run with: uv run pytest -m integration)",
+]
