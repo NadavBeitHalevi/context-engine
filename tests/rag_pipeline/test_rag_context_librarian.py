@@ -1,9 +1,9 @@
 """Live checks that the Context Library pipeline created what the Librarian needs.
 
 Reads (never writes) the Pinecone index configured in .env. Run the pipeline first:
-    uv run python -m rag_pipline.rag_context_librarian
+    uv run python -m rag_pipeline.rag_context_librarian
 then:
-    uv run pytest -m integration tests/rag_pipline
+    uv run pytest -m integration tests/rag_pipeline
 """
 
 import json
@@ -15,8 +15,8 @@ from pinecone import Pinecone
 
 from agents.librarian_agent import LibrarianAgent
 from config import Settings
-from rag_pipline.context_library import CONTEXT_BLUEPRINTS
-from rag_pipline.rag_context_librarian import embedding_dimension, namespace_count
+from rag_pipeline.context_library import CONTEXT_BLUEPRINTS
+from rag_pipeline.rag_context_librarian import embedding_dimension, namespace_count
 from services.mcp import create_mcp_message
 from services.vector_store import query_vector_store
 
@@ -41,7 +41,7 @@ def pc(settings: Settings) -> Pinecone:
     if not client.has_index(settings.pinecone_index_name):
         pytest.fail(
             f"Index '{settings.pinecone_index_name}' does not exist; "
-            "run: uv run python -m rag_pipline.rag_context_librarian"
+            "run: uv run python -m rag_pipeline.rag_context_librarian"
         )
     return client
 
@@ -95,6 +95,9 @@ def test_each_blueprint_is_stored_with_its_metadata(index, settings: Settings):
         ("Explain step by step how this mechanism works, with precise terms", "blueprint_technical_explanation"),
         ("Present this sensitive negotiation tactfully, without taking sides", "blueprint_diplomatic_context"),
         ("Brief the CTO on our AI roadmap and strategic initiatives", "blueprint_CTO_AI_Strategy"),
+        ("Present our long-term technology vision to the board", "blueprint_CTO_AI_Strategy"),
+        ("Design the system architecture and write ADRs that weigh the trade-offs", "blueprint_AI_Architecture"),
+        ("Identify the architecture characteristics and the building blocks of the system", "blueprint_AI_Architecture"),
     ],
 )
 def test_intent_retrieves_the_right_blueprint(index, embedding_client, settings: Settings, intent, expected_id):

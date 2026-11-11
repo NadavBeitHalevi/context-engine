@@ -9,7 +9,7 @@ Scenario: the user wants a *diplomatic* response about tomorrow's weather in Tel
    the Knowledge Store isn't loaded yet and the model has no live weather) via Claude.
 
 Needs ANTHROPIC_API_KEY, OPENAI_API_KEY and PINECONE_API_KEY in .env, and the Context
-Library loaded (uv run python -m rag_pipline.rag_context_librarian).
+Library loaded (uv run python -m rag_pipeline.rag_context_librarian).
 Run:  uv run pytest -m integration tests/agents   (live logs show each step)
 """
 
@@ -24,7 +24,7 @@ from pinecone import Pinecone
 from agents.librarian_agent import LibrarianAgent
 from agents.writer_agent import WriterAgent
 from config import Settings
-from rag_pipline.context_library import CONTEXT_BLUEPRINTS
+from rag_pipeline.context_library import CONTEXT_BLUEPRINTS
 from services.llm import call_llm, create_llm_client
 from services.mcp import create_mcp_message
 from services.vector_store import query_vector_store
@@ -85,7 +85,7 @@ def embedding_client(settings: Settings) -> OpenAI:
 def index(settings: Settings):
     pc = Pinecone(api_key=settings.pinecone_api_key)
     if not pc.has_index(settings.pinecone_index_name):
-        pytest.fail("Context Library index missing; run: uv run python -m rag_pipline.rag_context_librarian")
+        pytest.fail("Context Library index missing; run: uv run python -m rag_pipeline.rag_context_librarian")
     return pc.Index(settings.pinecone_index_name)
 
 

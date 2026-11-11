@@ -10,8 +10,8 @@ Retrieval works on intent:
 - The blueprint itself is stored as a JSON string in metadata under `blueprint_json`,
   which is the key `LibrarianAgent` reads back.
 
-Run (writes to the Pinecone index configured in .env):
-    uv run python -m rag_pipline.context_library
+Load it into Pinecone with the pipeline runner (creates/checks the index first):
+    uv run python -m rag_pipeline.rag_context_librarian
 """
 
 import json
@@ -77,29 +77,62 @@ CONTEXT_BLUEPRINTS: list[ContextBlueprint] = [
         }
     },
     {
+        # The software architect: turns requirements into a design the team can build.
         "id": "blueprint_AI_Architecture",
         "description": (
-            "Provides an overview of the AI architecture aligned with the concerns and priorities of a CTO. "
-            "Use for technical briefings, architecture reviews, and strategic planning."
+            "Designs a software system's architecture. Identifies the architecture characteristics the "
+            "project needs (scalability, availability, performance, maintainability), compares architecture "
+            "styles and their trade-offs, records decisions as Architecture Decision Records (ADRs), and "
+            "defines the building blocks: components, their responsibilities and how they interact. Use for "
+            "system design, architecture characterization, ADRs, trade-off analysis and component design."
         ),
         "blueprint": {
-            "scene_goal": "Explain the AI architecture clearly and concisely for decision-making.",
-            "style_guide": "Professional and technical tone. Focus on high-level architecture and key components.",
-            "instruction": "Organize the source facts into a coherent architecture overview following the style_guide.",
-        }
+            "scene_goal": "Produce a reasoned architecture design the team can build from.",
+            "style_guide": (
+                "Pragmatic, analytical architect's voice. Every decision names the options considered and "
+                "their trade-offs; nothing is presented as free. Precise, no buzzwords."
+            ),
+            "structure": [
+                "Architecture characteristics (prioritized, with the requirements that drive them)",
+                "Candidate architecture styles and their trade-offs",
+                "Decisions, each as an ADR: Title, Status, Context, Decision, Consequences",
+                "Building blocks: components, responsibilities and interactions",
+                "Risks and open questions",
+            ],
+            "instruction": (
+                "Analyze the source facts and produce the architecture design following the structure; "
+                "write every significant decision as an ADR."
+            ),
+        },
     },
     {
+        # The CTO: owns the vision, not the design.
         "id": "blueprint_CTO_AI_Strategy",
         "description": (
-            "Provides an overview of the AI strategy from a CTO perspective. "
-            "Use for strategic planning, technology roadmaps, and executive briefings."
+            "Sets the technology vision: where the product and its AI capabilities should be in the coming "
+            "years, why that matters to the business, and the guiding principles and strategic bets that "
+            "align the organization. Use for vision statements, long-term technology strategy, roadmaps, and "
+            "executive or board communication."
         ),
         "blueprint": {
-            "scene_goal": "Explain the AI strategy clearly and concisely for decision-making.",
-            "style_guide": "Professional and strategic tone. Focus on high-level goals and key initiatives.",
-            "instruction": "Organize the source facts into a coherent strategy overview following the style_guide.",
-        }
-    }
+            "scene_goal": "Articulate a compelling, coherent technology vision that aligns the organization.",
+            "style_guide": (
+                "Visionary but grounded, executive level. Business outcomes over implementation detail. "
+                "Confident and concise."
+            ),
+            "structure": [
+                "Vision statement",
+                "Why now: business and market drivers",
+                "Guiding principles",
+                "Strategic bets and roadmap horizons",
+                "How success is measured",
+            ],
+            "instruction": (
+                "Shape the source facts into a technology vision following the structure; leave design and "
+                "implementation details to the architecture team."
+            ),
+        },
+    },
 ]
 
 
@@ -137,20 +170,3 @@ def upload_context_library(
         index.upsert(vectors=vectors, namespace=namespace)
     logger.info("Uploaded %d context blueprints to namespace '%s'.", len(vectors), namespace)
     return len(vectors)
-
-
-def main() -> None:
-    from pinecone import Pinecone
-
-    from config import get_settings
-
-    settings = get_settings()
-    logging.basicConfig(level=settings.log_level, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
-
-    index = Pinecone(api_key=settings.pinecone_api_key).Index(settings.pinecone_index_name)
-    embedding_client = OpenAI(api_key=settings.openai_api_key)
-    upload_context_library(index, embedding_client, settings.embedding_model, settings.namespace_context)
-
-
-if __name__ == "__main__":
-    main()
