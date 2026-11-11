@@ -16,7 +16,7 @@ from pinecone import Pinecone
 from agents.librarian_agent import LibrarianAgent
 from config import Settings
 from rag_pipeline.context_library import CONTEXT_BLUEPRINTS
-from rag_pipeline.rag_context_librarian import embedding_dimension, namespace_count
+from rag_pipeline.rag_context_librarian import embedding_dimension, stored_ids
 from services.mcp import create_mcp_message
 from services.vector_store import query_vector_store
 
@@ -69,10 +69,11 @@ def test_index_matches_embedding_model(pc: Pinecone, settings: Settings):
 
 
 def test_namespace_holds_exactly_the_defined_blueprints(index, settings: Settings):
-    count = namespace_count(index, settings.namespace_context)
-    logger.info("Namespace '%s' holds %d vectors; %d blueprints defined", settings.namespace_context, count, len(CONTEXT_BLUEPRINTS))
+    # Compare ids from index.list(), not describe_index_stats() counts, which lag behind writes.
+    ids = stored_ids(index, settings.namespace_context)
+    logger.info("Namespace '%s' holds ids: %s", settings.namespace_context, sorted(ids))
 
-    assert count == len(CONTEXT_BLUEPRINTS)
+    assert ids == set(BLUEPRINTS_BY_ID)
 
 
 def test_each_blueprint_is_stored_with_its_metadata(index, settings: Settings):

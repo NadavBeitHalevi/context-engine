@@ -136,25 +136,29 @@ CONTEXT_BLUEPRINTS: list[ContextBlueprint] = [
 ]
 
 
+def blueprint_metadata(item: ContextBlueprint) -> dict[str, str]:
+    """The metadata stored with a blueprint's vector. The single source of truth for its shape,
+    used both when uploading and when checking that Pinecone serves the current content."""
+    return {
+        "description": item["description"],
+        "blueprint_json": json.dumps(item["blueprint"]),
+    }
+
+
 def build_context_vectors(
     embedding_client: OpenAI,
     embedding_model: str,
     blueprints: list[ContextBlueprint] = CONTEXT_BLUEPRINTS,
 ) -> list[dict[str, Any]]:
     """Embed each blueprint's description and attach the blueprint as metadata."""
-    vectors: list[dict[str, Any]] = []
-    for item in blueprints:
-        vectors.append(
-            {
-                "id": item["id"],
-                "values": get_embedding(embedding_client, embedding_model, item["description"]),
-                "metadata": {
-                    "description": item["description"],
-                    "blueprint_json": json.dumps(item["blueprint"]),
-                },
-            }
-        )
-    return vectors
+    return [
+        {
+            "id": item["id"],
+            "values": get_embedding(embedding_client, embedding_model, item["description"]),
+            "metadata": blueprint_metadata(item),
+        }
+        for item in blueprints
+    ]
 
 
 def upload_context_library(

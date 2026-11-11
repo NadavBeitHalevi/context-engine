@@ -9,18 +9,22 @@ Steps:
 3. Wait until Pinecone serves the *new* content: fetch every blueprint back and compare
    it with what was uploaded (serverless indexes are eventually consistent, and on a
    re-run the old vectors are already there under the same ids).
+4. Remove stale blueprints: any id stored in the namespace that is no longer defined in
+   `CONTEXT_BLUEPRINTS` is deleted, so the Librarian can't return a removed blueprint.
 
-Upserts use stable blueprint ids, so re-running updates blueprints in place.
-`--fresh` first empties the Context Library namespace, which also removes blueprints
-you deleted from `CONTEXT_BLUEPRINTS`. It never touches other namespaces.
+The namespace always ends up holding exactly the defined blueprints. `--fresh` also
+empties it first, forcing every blueprint to be re-embedded. Other namespaces are
+never touched.
+
+Vector *ids* are read with `index.list()`, not `describe_index_stats()`: the stats
+counts lag behind writes, so they are never used to decide anything here.
 
 Run:
     uv run python -m rag_pipeline.rag_context_librarian           # create/update
-    uv run python -m rag_pipeline.rag_context_librarian --fresh   # rebuild namespace
+    uv run python -m rag_pipeline.rag_context_librarian --fresh   # re-embed everything
 """
 
 import argparse
-import json
 import logging
 import time
 from collections.abc import Callable
@@ -29,9 +33,15 @@ from typing import Any
 
 from openai import OpenAI
 from pinecone import Pinecone, ServerlessSpec
+from pinecone.exceptions import PineconeProtocolError, RateLimitException, ServiceException
 
 from config import Settings, get_settings
-from rag_pipeline.context_library import CONTEXT_BLUEPRINTS, ContextBlueprint, upload_context_library
+from rag_pipeline.context_library import (
+    CONTEXT_BLUEPRINTS,
+    ContextBlueprint,
+    blueprint_metadata,
+    upload_context_library,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +55,15 @@ EMBEDDING_DIMENSIONS: dict[str, int] = {
 INDEX_METRIC = "cosine"
 INDEX_CLOUD = "aws"
 INDEX_REGION = "us-east-1"
-POLL_INTERVAL_S = 2
+POLL_INTERVAL_S = 2.0
+
+# Errors worth retrying while polling: Pinecone 5xx, 429, and dropped connections.
+TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+    ServiceException,
+    RateLimitException,
+    PineconeProtocolError,
+    ConnectionError,
+)
 
 
 @dataclass(frozen=True)
@@ -54,7 +72,7 @@ class PipelineResult:
     namespace: str
     created_index: bool
     uploaded: int
-    vector_count: int
+    removed: int  # stale blueprints deleted
 
 
 def embedding_dimension(model: str) -> int:
@@ -65,14 +83,20 @@ def embedding_dimension(model: str) -> int:
 
 
 def _wait_until(check: Callable[[], bool], what: str, timeout_s: float) -> None:
+    """Poll `check` until it returns True. Transient Pinecone errors are retried until the deadline."""
     deadline = time.monotonic() + timeout_s
-    while not check():
+    while True:
+        try:
+            if check():
+                return
+        except TRANSIENT_ERRORS as exc:
+            logger.warning("Transient error while waiting for %s (will retry): %s", what, exc)
         if time.monotonic() > deadline:
             raise TimeoutError(f"Timed out after {timeout_s:.0f}s waiting for {what}.")
         time.sleep(POLL_INTERVAL_S)
 
 
-def ensure_index(pc: Pinecone, name: str, dimension: int, timeout_s: float = 120) -> bool:
+def ensure_index(pc: Any, name: str, dimension: int, timeout_s: float = 120) -> bool:
     """Create the serverless index if missing, check it fits, and wait until it's ready.
 
     Returns True if the index was created by this call.
@@ -101,71 +125,85 @@ def ensure_index(pc: Pinecone, name: str, dimension: int, timeout_s: float = 120
     return created
 
 
-def namespace_count(index: Any, namespace: str) -> int:
-    summary = index.describe_index_stats().namespaces.get(namespace)
-    return summary.vector_count if summary else 0
+def stored_ids(index: Any, namespace: str) -> set[str]:
+    """Every vector id currently in the namespace (empty if the namespace doesn't exist)."""
+    return {item.id for page in index.list(namespace=namespace) for item in page.vectors}
 
 
 def clear_namespace(index: Any, namespace: str, timeout_s: float = 60) -> None:
     """Delete every vector in one namespace and wait until it's empty."""
-    if namespace_count(index, namespace) == 0:
+    if not stored_ids(index, namespace):
         return
     logger.info("Clearing namespace '%s'.", namespace)
     index.delete(delete_all=True, namespace=namespace)
-    _wait_until(lambda: namespace_count(index, namespace) == 0, f"namespace '{namespace}' to empty", timeout_s)
+    _wait_until(lambda: not stored_ids(index, namespace), f"namespace '{namespace}' to empty", timeout_s)
 
 
-def _serves_current_blueprints(index: Any, namespace: str, blueprints: list[ContextBlueprint]) -> bool:
-    """True once every blueprint can be fetched with exactly the content that was uploaded."""
+def remove_stale(index: Any, namespace: str, keep_ids: set[str], timeout_s: float = 60) -> int:
+    """Delete stored vectors whose ids aren't in `keep_ids`. Returns how many were deleted."""
+    stale = sorted(stored_ids(index, namespace) - keep_ids)
+    if not stale:
+        return 0
+    logger.info("Removing %d stale blueprint(s) from '%s': %s", len(stale), namespace, stale)
+    index.delete(ids=stale, namespace=namespace)
+    _wait_until(
+        lambda: not (stored_ids(index, namespace) & set(stale)),
+        f"stale blueprints to leave '{namespace}'",
+        timeout_s,
+    )
+    return len(stale)
+
+
+def serves_current_blueprints(index: Any, namespace: str, blueprints: list[ContextBlueprint]) -> bool:
+    """True once every blueprint can be fetched with exactly the metadata that was uploaded."""
+    if not blueprints:
+        return True  # nothing to check (and Pinecone rejects a fetch with no ids)
     fetched = index.fetch(ids=[b["id"] for b in blueprints], namespace=namespace).vectors
     for b in blueprints:
         vector = fetched.get(b["id"])
-        metadata = (vector.metadata or {}) if vector else {}
-        if metadata.get("description") != b["description"]:
-            return False
-        if metadata.get("blueprint_json") != json.dumps(b["blueprint"]):
+        if vector is None or (vector.metadata or {}) != blueprint_metadata(b):
             return False
     return True
 
 
-def run_pipeline(settings: Settings, fresh: bool = False, blueprints: list[ContextBlueprint] = CONTEXT_BLUEPRINTS) -> PipelineResult:
-    """Create the index if needed and load the Context Library into it."""
-    pc = Pinecone(api_key=settings.pinecone_api_key)
+def run_pipeline(
+    settings: Settings,
+    fresh: bool = False,
+    blueprints: list[ContextBlueprint] = CONTEXT_BLUEPRINTS,
+    *,
+    pc: Any | None = None,
+    embedding_client: Any | None = None,
+    timeout_s: float = 60,
+) -> PipelineResult:
+    """Create the index if needed and make the Context Library namespace hold exactly `blueprints`.
+
+    `pc` and `embedding_client` default to real clients built from settings; tests pass fakes.
+    """
+    pc = pc or Pinecone(api_key=settings.pinecone_api_key)
+    embedding_client = embedding_client or OpenAI(api_key=settings.openai_api_key)
     name = settings.pinecone_index_name
     namespace = settings.namespace_context
 
     created = ensure_index(pc, name, embedding_dimension(settings.embedding_model))
     index = pc.Index(name)
     if fresh:
-        clear_namespace(index, namespace)
+        clear_namespace(index, namespace, timeout_s)
 
-    uploaded = upload_context_library(
-        index,
-        OpenAI(api_key=settings.openai_api_key),
-        settings.embedding_model,
-        namespace,
-        blueprints,
-    )
+    uploaded = upload_context_library(index, embedding_client, settings.embedding_model, namespace, blueprints)
     _wait_until(
-        lambda: _serves_current_blueprints(index, namespace, blueprints),
+        lambda: serves_current_blueprints(index, namespace, blueprints),
         f"namespace '{namespace}' to serve the uploaded blueprints",
-        timeout_s=60,
+        timeout_s,
     )
     logger.info("All %d blueprints are queryable with their current content.", uploaded)
 
-    # Stats lag behind fetches; this count is informational (stale-vector warning only).
-    count = namespace_count(index, namespace)
-    if count > uploaded:
-        logger.warning(
-            "Namespace '%s' holds %d vectors but %d blueprints are defined; run with --fresh to drop stale ones.",
-            namespace, count, uploaded,
-        )
-    return PipelineResult(name, namespace, created, uploaded, count)
+    removed = remove_stale(index, namespace, {b["id"] for b in blueprints}, timeout_s)
+    return PipelineResult(name, namespace, created, uploaded, removed)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Load the Context Library into Pinecone.")
-    parser.add_argument("--fresh", action="store_true", help="empty the Context Library namespace first")
+    parser.add_argument("--fresh", action="store_true", help="empty the namespace first and re-embed everything")
     args = parser.parse_args()
 
     settings = get_settings()
