@@ -28,6 +28,11 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra -m 'not integration'"
+# Live logs: show each test's steps (and the app's own logs) as tests run, no -s needed.
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s %(levelname)-7s %(name)s - %(message)s"
+log_cli_date_format = "%H:%M:%S"
 markers = [
     "integration: calls real external APIs with keys from .env (run with: uv run pytest -m integration)",
 ]
